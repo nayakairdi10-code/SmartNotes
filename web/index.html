@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartNotes Web</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Login Page -->
+    <div id="loginPage" class="container">
+        <div class="auth-container">
+            <div class="logo-title" style="justify-content: center; margin-bottom: 30px;">
+                <img src="smartnotes.jpeg" alt="SmartNotes Logo" class="logo">
+                <h1>SmartNotes</h1>
+            </div>
+            
+            <div id="loginForm" class="auth-form">
+                <h2>Masuk</h2>
+                <input type="email" id="loginEmail" placeholder="Email (@gmail.com)" class="auth-input">
+                <input type="password" id="loginPassword" placeholder="Password" class="auth-input">
+                <button onclick="login()" class="btn-auth">Masuk</button>
+                <button onclick="loginWithGoogle()" class="btn-auth" style="background: #fff; color: #444; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px;">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px;"> Masuk dengan Google
+                </button>
+                <p class="auth-switch">Belum punya akun? <a href="#" onclick="showRegister()">Daftar</a></p>
+            </div>
+            
+            <div id="registerForm" class="auth-form" style="display: none;">
+                <h2>Daftar</h2>
+                <input type="email" id="registerEmail" placeholder="Email (@gmail.com)" class="auth-input">
+                <input type="password" id="registerPassword" placeholder="Password (min 6 karakter)" class="auth-input">
+                <button onclick="register()" class="btn-auth">Daftar</button>
+                <button onclick="loginWithGoogle()" class="btn-auth" style="background: #fff; color: #444; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px;">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px;"> Daftar dengan Google
+                </button>
+                <p class="auth-switch">Sudah punya akun? <a href="#" onclick="showLogin()">Masuk</a></p>
+            </div>
+            
+            <div id="authMessage" class="auth-message"></div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="appPage" class="container" style="display: none;">
+        <header>
+            <div class="logo-title">
+                <img src="smartnotes.jpeg" alt="SmartNotes Logo" class="logo">
+                <h1>SmartNotes</h1>
+            </div>
+            <div class="header-actions">
+                <span id="userEmail" class="user-email"></span>
+                <button onclick="logout()" class="btn-logout">Keluar</button>
+                <button id="addBtn" class="btn-add">+ Catat</button>
+            </div>
+        </header>
+
+        <div id="notesList" class="notes-list"></div>
+
+        <div id="modal" class="modal">
+            <div class="modal-content">
+                <input type="text" id="noteTitle" placeholder="Judul catatan">
+                <textarea id="noteContent" placeholder="Tulis isi catatan..."></textarea>
+                <div class="modal-actions">
+                    <button onclick="saveNote()" class="btn-save">Simpan</button>
+                    <button onclick="closeModal()" class="btn-cancel">Batal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+</html>
