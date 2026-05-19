@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Notes</title>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+        import { SpeechToText } from "./web/speech-to-text.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAjproENjlft4FO--6Pq-5iq4UdEC2mAeU",
+            authDomain: "smartnotes-5a9fc.firebaseapp.com",
+            projectId: "smartnotes-5a9fc",
+            storageBucket: "smartnotes-5a9fc.firebasestorage.app",
+            messagingSenderId: "414513448878",
+            appId: "1:414513448878:web:b92210f21e8245ac746a3f"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let notes = [];
+        let currentCategory = 'Semua Catatan';
+        let editingNoteId = null;
+        let currentUserId = null;
+        let selectedColor = '#E0E7FF';
+
+        const colors = ['#E0E7FF', '#FEF3C7', '#FFFFFF', '#D1FAE5', '#FCE7F3', '#EDE9FE', '#FDE68A', '#A7F3D0'];
+
+        // Auth UI functions
+        window.showRegister = function() {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'block';
+            document.getElementById('authMessage').textContent = '';
+        }
+
+        window.showLogin = function() {
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('authMessage').textContent = '';
+        }
+
+        function showAuthMessage(msg, isError = true) {
+            const el = document.getElementById('authMessage');
+            el.style.color = isError ? '#f44336' : 'green';
+            el.textContent = msg;
+        }
+
+        window.register = async function() {
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const btn = document.querySelector('#registerForm .btn-auth');
+            
+            showAuthMessage('');
+            
+            if (!email || !password) {
+                showAuthMessage('Email dan password harus diisi');
+                return;
+            }
+            if (!email.includes('@gmail.com')) {
+                showAuthMessage('Email harus menggunakan @gmail.com');
+                return;
+            }
+            if (password.length < 6) {
+                showAuthMessage('Password minimal 6 karakter');
+                return;
+            }
+            
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Memproses...';
+                
+                await createUserWithEmailAndPassword(auth, email, password);
+                
+            } catch (error) {
+                btn.disabled = false;
+                btn.textContent = 'Daftar';
+                
+                const errMap = {
+                    'auth/email-already-in-use': 'Email sudah terdaftar',
+                    'auth/invalid-email': 'Format email tidak valid',
+                    'auth/weak-password': 'Password terlalu lemah, minimal 6 karakter',
+                    'auth/too-many-requests': 'Terlalu banyak percobaan, coba lagi nanti'
+                };
+                showAuthMessage(errMap[error.code] || error.message);
+            }
+        }
+
+        window.login = async function() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const btn = document.querySelector('#loginForm .btn-auth');
+            
+            showAuthMessage('');
+            
+            if (!email || !password) {
+                showAuthMessage('Email dan password harus diisi');
+                return;
+            }
+            if (!email.includes('@gmail.com')) {
+                showAuthMessage('Email harus menggunakan @gmail.com');
+                return;
+            }
+            
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Memproses...';
+                
+                await signInWithEmailAndPassword(auth, email, password);
+            } catch (error) {
+                btn.disabled = false;
+                btn.textContent = 'Masuk';
+                
+                const errMap = {
+                    'auth/user-not-found': 'Email belum terdaftar',
+                    'auth/wrong-password': 'Password salah',
+                    'auth/invalid-credential': 'Email atau password salah',
+                    'auth/invalid-email': 'Format email tidak valid',
+                    'auth/too-many-requests': 'Terlalu banyak percobaan, coba lagi nanti',
+                    'auth/invalid-login-credentials': 'Email atau password salah'
+                };
+                showAuthMessage(errMap[error.code] || error.message);
+            }
+        }
+
+        window.loginWithGoogle = async function() {
+            const provider = new GoogleAuthProvider();
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (error) {
+                showAuthMessage('Gagal login dengan Google: ' + error.message);
+            }
+        }
+
+        window.selectColor = function(color) {
+            selectedColor = color;
+            const colorButtons = document.querySelectorAll('.color-btn');
+            colorButtons.forEach(btn => {
+                btn.classList.remove('selected');
+                if (btn.dataset.color === color) {
+                    btn.classList.add('selected');
+                }
+            });
+        }
+
+        // Theme toggle
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            document.getElementById('themeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+            localStorage.setItem('theme', theme);
+        }
+
+        window.toggleTheme = function() {
+            const current = document.documentElement.getAttribute('data-theme');
+            applyTheme(current === 'dark' ? 'light' : 'dark');
+        }
+
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        applyTheme(savedTheme);
+
+        // Speech to Text
+        const stt = new SpeechToText({ lang: 'id-ID' });
+
+        stt.onResult((transcript) => {
+            const contentInput = document.getElementById('noteContentInput');
+            if (contentInput) {
+                contentInput.value = transcript;
+            }
+        });
+
+        stt.onStatusChange((status) => {
+            const micBtn = document.getElementById('micBtn');
+            if (micBtn) {
+                micBtn.classList.toggle('recording', status === 'recording');
+                micBtn.textContent = status === 'recording' ? '🔴' : '🎙️';
+            }
+        });
+
+        window.toggleSpeechToText = function() {
+            stt.toggle();
+        }
+
+        window.logout = async function() {
+            try {
+                await signOut(auth);
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+        }
+
+        // Auth state listener
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUserId = user.uid;
+                document.getElementById('loginPage').style.display = 'none';
+                document.getElementById('mainApp').style.display = 'flex';
+                document.getElementById('userEmail').textContent = user.email;
+                loadNotes();
+            } else {
+                document.getElementById('loginPage').style.display = 'flex';
+                document.getElementById('mainApp').style.display = 'none';
+                notes = [];
+            }
+        });
+
+        // Notes functions
+        function loadNotes() {
+            const notesRef = collection(db, "users", currentUserId, "notes");
+            const qry = query(notesRef, orderBy("updatedAt", "desc"));
+            
+            onSnapshot(qry, (snapshot) => {
+                notes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderNotes();
+            });
+        }
+
+        function formatDate(date) {
+            const d = new Date(date);
+            return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        window.openModal = function(noteId = null) {
+            editingNoteId = noteId;
+            const modal = document.getElementById('noteModal');
+            const titleInput = document.getElementById('noteTitleInput');
+            const contentInput = document.getElementById('noteContentInput');
+            const categorySelect = document.getElementById('noteCategory');
+            const modalTitle = document.getElementById('modalTitle');
+            const colorButtons = document.querySelectorAll('.color-btn');
+
+            if (noteId) {
+                const note = notes.find(n => n.id === noteId);
+                titleInput.value = note.title;
+                contentInput.value = note.content;
+                categorySelect.value = note.category;
+                selectedColor = note.color || '#E0E7FF';
+                modalTitle.textContent = 'Edit Catatan';
+            } else {
+                titleInput.value = '';
+                contentInput.value = '';
+                categorySelect.value = (currentCategory === 'Sampah' || currentCategory === 'Semua Catatan') ? 'Favorit' : currentCategory;
+                selectedColor = '#E0E7FF';
+                modalTitle.textContent = 'Catatan Baru';
+            }
+
+            colorButtons.forEach(btn => {
+                btn.classList.remove('selected');
+                if (btn.dataset.color === selectedColor) {
+                    btn.classList.add('selected');
+                }
+            });
+
+            modal.classList.add('active');
+            titleInput.focus();
+        }
+
+        window.closeModal = function() {
+            document.getElementById('noteModal').classList.remove('active');
+            editingNoteId = null;
+        }
+
+        window.saveNote = async function() {
+            const title = document.getElementById('noteTitleInput').value.trim();
+            const content = document.getElementById('noteContentInput').value.trim();
+            const category = document.getElementById('noteCategory').value;
+            const saveBtn = document.querySelector('.btn-save');
+
+            if (!title) {
+                alert('Judul catatan tidak boleh kosong!');
+                return;
+            }
+
+            if (!currentUserId) {
+                alert('Sesi anda telah berakhir, silakan login ulang');
+                return;
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Menyimpan...';
+
+            try {
+                if (editingNoteId) {
+                    await updateDoc(doc(db, "users", currentUserId, "notes", editingNoteId), {
+                        title,
+                        content,
+                        category,
+                        color: selectedColor,
+                        updatedAt: new Date().toISOString()
+                    });
+                } else {
+                    await addDoc(collection(db, "users", currentUserId, "notes"), {
+                        title,
+                        content,
+                        category,
+                        color: selectedColor,
+                        favorite: false,
+                        deleted: false,
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+
+                closeModal();
+            } catch (error) {
+                console.error('Error saving note:', error);
+                alert('Gagal menyimpan catatan: ' + error.message);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Simpan';
+            }
+        }
+
+        window.deleteNote = async function(noteId) {
+            if (currentCategory === 'Sampah') {
+                if (confirm('Hapus permanen catatan ini?')) {
+                    try {
+                        await deleteDoc(doc(db, "users", currentUserId, "notes", noteId));
+                    } catch (error) {
+                        console.error('Error deleting note:', error);
+                    }
+                }
+            } else {
+                if (confirm('Pindahkan ke sampah?')) {
+                    try {
+                        await updateDoc(doc(db, "users", currentUserId, "notes", noteId), {
+                            deleted: true,
+                            deletedAt: new Date().toISOString()
+                        });
+                    } catch (error) {
+                        console.error('Error moving to trash:', error);
+                    }
+                }
+            }
+        }
+
+        window.toggleFavorite = async function(noteId) {
+            const note = notes.find(n => n.id === noteId);
+            try {
+                await updateDoc(doc(db, "users", currentUserId, "notes", noteId), {
+                    favorite: !note.favorite
+                });
+            } catch (error) {
+                console.error('Error toggling favorite:', error);
+            }
+        }
+
+        window.restoreNote = async function(noteId) {
+            try {
+                await updateDoc(doc(db, "users", currentUserId, "notes", noteId), {
+                    deleted: false
+                });
+            } catch (error) {
+                console.error('Error restoring note:', error);
+            }
+        }
+
+        window.switchCategory = function(category) {
+            currentCategory = category;
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+                if (item.dataset.category === category) {
+                    item.classList.add('active');
+                }
+            });
+            document.querySelector('.content-title').textContent = category;
+            renderNotes();
+        }
+
+        window.searchNotes = function(keyword) {
+            renderNotes(keyword.toLowerCase());
+        }
+
+        function renderNotes(searchKeyword = '') {
+            const grid = document.getElementById('notesGrid');
+
+            let filteredNotes = notes.filter(note => {
+                if (currentCategory === 'Sampah') return note.deleted && !note.permanentlyDeleted;
+                if (currentCategory === 'Favorit') return (note.favorite || note.category === 'Favorit') && !note.deleted;
+                if (note.deleted) return false;
+                if (currentCategory !== 'Semua Catatan' && note.category !== currentCategory) return false;
+                return true;
+            });
+
+            if (searchKeyword) {
+                filteredNotes = filteredNotes.filter(note =>
+                    note.title.toLowerCase().includes(searchKeyword) ||
+                    note.content.toLowerCase().includes(searchKeyword)
+                );
+            }
+
+            if (filteredNotes.length === 0) {
+                grid.innerHTML = '<div class="empty-state">Belum ada catatan. Klik "+ Catatan Baru" untuk menambahkan.</div>';
+                return;
+            }
+
+            grid.innerHTML = filteredNotes.map((note, index) => `
+                <div class="note-card" style="background: ${note.color || colors[index % colors.length]};" onclick="openModal('${note.id}')">
+                    <div class="note-actions">
+                        ${currentCategory === 'Sampah' ? 
+                            `<button class="note-action-btn" onclick="event.stopPropagation(); restoreNote('${note.id}')">↩</button>` :
+                            `<button class="note-action-btn" onclick="event.stopPropagation(); toggleFavorite('${note.id}')">${note.favorite ? '★' : '☆'}</button>`
+                        }
+                        <button class="note-action-btn delete" onclick="event.stopPropagation(); deleteNote('${note.id}')">✕</button>
+                    </div>
+                    <div>
+                        <h3 class="note-title">${note.favorite ? '★ ' : ''}${note.title}</h3>
+                        <p class="note-text">${note.content || 'Tidak ada isi...'}</p>
+                    </div>
+                    <small class="note-date">${formatDate(note.updatedAt)}</small>
+                </div>
+            `).join('');
+        }
+
+        // Event Listeners
+        document.querySelector('.new-note-btn').addEventListener('click', () => openModal());
+        document.querySelector('.search-bar').addEventListener('input', (e) => searchNotes(e.target.value));
+
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                switchCategory(item.dataset.category);
+            });
+        });
+
+        document.getElementById('noteModal').addEventListener('click', (e) => {
+            if (e.target.id === 'noteModal') closeModal();
+        });
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6366F1;
+            --primary-dark: #4F46E5;
+            --primary-light: #E0E7FF;
+            --primary-glow: rgba(99, 102, 241, 0.35);
+            --bg: #f0f2ff;
+            --surface: #ffffff;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --border: #e2e8f0;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+            --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+            --shadow-xl: 0 20px 60px rgba(99, 102, 241, 0.25);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 20px;
+            --radius-xl: 24px;
+            --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --login-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --login-card: rgba(255,255,255,0.95);
+            --input-bg: #f8fafc;
+            --input-bg-focus: #fff;
+            --modal-bg: #fff;
+            --cancel-btn-bg: #f1f5f9;
+            --cancel-btn-hover: #e2e8f0;
+            --note-card-border: rgba(0,0,0,0.04);
+            --empty-state-bg: rgba(255,255,255,0.5);
+            --scrollbar-thumb: #cbd5e1;
+            --scrollbar-thumb-hover: #94a3b8;
+            --header-bg: rgba(255,255,255,0.85);
+            --sidebar-bg: rgba(255,255,255,0.7);
+            --action-btn-bg: rgba(255,255,255,0.95);
+            --action-btn-hover-bg: #fff;
+        }
+
+        [data-theme="dark"] {
+            --primary: #818CF8;
+            --primary-dark: #6366F1;
+            --primary-light: #312E81;
+            --primary-glow: rgba(129, 140, 248, 0.3);
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #334155;
+            --danger: #f87171;
+            --danger-hover: #ef4444;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+            --shadow-xl: 0 20px 60px rgba(99, 102, 241, 0.3);
+            --login-bg: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
+            --login-card: rgba(30, 41, 59, 0.95);
+            --input-bg: #1e293b;
+            --input-bg-focus: #1e293b;
+            --modal-bg: #1e293b;
+            --cancel-btn-bg: #334155;
+            --cancel-btn-hover: #475569;
+            --note-card-border: rgba(255,255,255,0.06);
+            --empty-state-bg: rgba(30,41,59,0.5);
+            --scrollbar-thumb: #475569;
+            --scrollbar-thumb-hover: #64748b;
+            --header-bg: rgba(15, 23, 42, 0.9);
+            --sidebar-bg: rgba(15, 23, 42, 0.8);
+            --action-btn-bg: rgba(30, 41, 59, 0.95);
+            --action-btn-hover-bg: #334155;
+        }
+
+        body {
+            font-family: Inter, Segoe UI, system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            color: var(--text);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--scrollbar-thumb-hover);
+        }
+
+        /* Login Page */
+        #loginPage {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: var(--login-bg);
+            position: relative;
+            overflow: hidden;
+        }
+        #loginPage::before {
+            content: '';
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 50%;
+            top: -150px;
+            right: -150px;
+        }
+        #loginPage::after {
+            content: '';
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 50%;
+            bottom: -100px;
+            left: -100px;
+        }
+
+        .auth-container {
+            background: var(--login-card);
+            backdrop-filter: blur(20px);
+            padding: 44px 40px 36px;
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-xl);
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+            animation: fadeUp 0.5s ease;
+        }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .logo-title {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            justify-content: center;
+            margin-bottom: 32px;
+        }
+        .logo-title img {
+            height: 42px;
+            width: auto;
+        }
+        .logo-title h1 {
+            background: linear-gradient(135deg, #6366F1, #8B5CF6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+        }
+
+        .auth-form h2 {
+            color: var(--text);
+            margin-bottom: 24px;
+            text-align: center;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .auth-input {
+            width: 100%;
+            padding: 13px 16px;
+            margin-bottom: 14px;
+            border: 2px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            transition: var(--transition);
+            background: var(--input-bg);
+            color: var(--text);
+        }
+        .auth-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: var(--input-bg-focus);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+        .auth-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn-auth {
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            border: none;
+            padding: 13px;
+            border-radius: var(--radius-sm);
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            letter-spacing: 0.2px;
+        }
+        .btn-auth:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--primary-glow);
+        }
+        .btn-auth:active {
+            transform: translateY(0);
+        }
+
+        .auth-switch {
+            text-align: center;
+            margin-top: 18px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        .auth-switch a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+        .auth-switch a:hover {
+            color: var(--primary-dark);
+            text-decoration: underline;
+        }
+
+        .auth-message {
+            margin-top: 16px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Main App */
+        #mainApp {
+            display: none;
+            height: 100vh;
+            flex-direction: column;
+            background: var(--bg);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 28px;
+            background: var(--header-bg);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            gap: 16px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 17px;
+            color: var(--text);
+            letter-spacing: -0.3px;
+        }
+        .header-left img {
+            height: 26px;
+            width: auto;
+        }
+
+        .search-bar {
+            padding: 10px 18px 10px 40px;
+            border: 1.5px solid var(--border);
+            border-radius: 100px;
+            width: 320px;
+            font-size: 14px;
+            outline: none;
+            transition: var(--transition);
+            background: var(--input-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat 14px center;
+            color: var(--text);
+        }
+        .search-bar:focus {
+            border-color: var(--primary);
+            background-color: var(--input-bg-focus);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+        .search-bar::placeholder {
+            color: var(--text-muted);
+        }
+
+        .new-note-btn {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 100px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            white-space: nowrap;
+            letter-spacing: 0.2px;
+        }
+        .new-note-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--primary-glow);
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 220px;
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(16px);
+            padding: 20px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            border-right: 1px solid var(--border);
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .nav-item:hover {
+            background: var(--primary-light);
+            color: var(--primary-dark);
+        }
+        .nav-item.active {
+            background: var(--primary);
+            color: #fff;
+            font-weight: 600;
+            box-shadow: 0 2px 8px var(--primary-glow);
+        }
+
+        .content-area {
+            flex: 1;
+            padding: 28px 32px;
+            overflow-y: auto;
+        }
+
+        .content-title {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 24px;
+            letter-spacing: -0.4px;
+        }
+
+        .notes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 18px;
+        }
+
+        .note-card {
+            padding: 20px;
+            border-radius: var(--radius-md);
+            min-height: 150px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--note-card-border);
+        }
+        .note-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-md);
+        }
+        .note-card:active {
+            transform: translateY(-1px);
+        }
+
+        .note-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 8px;
+            letter-spacing: -0.2px;
+            padding-right: 36px;
+        }
+        .note-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .note-date {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 14px;
+            font-weight: 500;
+        }
+
+        .note-actions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: none;
+            gap: 4px;
+            z-index: 2;
+        }
+        .note-card:hover .note-actions {
+            display: flex;
+        }
+
+        .note-action-btn {
+            background: var(--action-btn-bg);
+            backdrop-filter: blur(4px);
+            border: 1px solid var(--border);
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+        }
+        .note-action-btn:hover {
+            background: var(--action-btn-hover-bg);
+            border-color: #cbd5e1;
+            color: var(--text);
+        }
+        .note-action-btn.delete:hover {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: var(--danger);
+        }
+
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 60px 40px;
+            color: var(--text-muted);
+            font-size: 15px;
+            background: var(--empty-state-bg);
+            border-radius: var(--radius-md);
+            border: 2px dashed var(--border);
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.5);
+            backdrop-filter: blur(6px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--modal-bg);
+            padding: 32px;
+            border-radius: var(--radius-lg);
+            width: 520px;
+            max-width: 92vw;
+            box-shadow: var(--shadow-lg);
+            animation: scaleIn 0.25s ease;
+        }
+        @keyframes scaleIn {
+            from { opacity: 0; transform: scale(0.95) translateY(8px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .modal h2 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--text);
+            letter-spacing: -0.3px;
+        }
+
+        .modal input, .modal textarea, .modal select {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            font-family: inherit;
+            margin-bottom: 14px;
+            outline: none;
+            transition: var(--transition);
+            background: var(--input-bg);
+            color: var(--text);
+        }
+        .modal input:focus, .modal textarea:focus, .modal select:focus {
+            border-color: var(--primary);
+            background: var(--input-bg-focus);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+        .modal textarea {
+            min-height: 150px;
+            resize: vertical;
+        }
+
+        .textarea-wrapper {
+            position: relative;
+            margin-bottom: 14px;
+        }
+        .textarea-wrapper textarea {
+            margin-bottom: 0;
+        }
+        .mic-btn {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: var(--input-bg);
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            z-index: 1;
+        }
+        .mic-btn:hover {
+            opacity: 1;
+            background: var(--primary-light);
+            border-color: var(--primary);
+        }
+        .mic-btn.recording {
+            background: #fef2f2;
+            border-color: var(--danger);
+            color: var(--danger);
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 6px;
+        }
+        .modal-buttons button {
+            padding: 10px 22px;
+            border-radius: var(--radius-sm);
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+        .btn-cancel {
+            background: var(--cancel-btn-bg);
+            color: var(--text-secondary);
+        }
+        .btn-cancel:hover {
+            background: var(--cancel-btn-hover);
+        }
+        .btn-save {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: #fff;
+        }
+        .btn-save:hover {
+            box-shadow: 0 4px 16px var(--primary-glow);
+            transform: translateY(-1px);
+        }
+
+        .user-actions {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .user-email {
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .btn-theme {
+            background: var(--input-bg);
+            border: 1.5px solid var(--border);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-theme:hover {
+            transform: scale(1.1);
+            border-color: var(--primary);
+        }
+
+        .btn-logout {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1.5px solid var(--border);
+            padding: 8px 18px;
+            border-radius: 100px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+        .btn-logout:hover {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: var(--danger);
+        }
+
+        .color-picker-container {
+            margin: 10px 0 14px;
+        }
+        .color-picker-container label {
+            display: block;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: var(--text);
+            font-weight: 600;
+        }
+        .color-options {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .color-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+        }
+        .color-btn:hover {
+            transform: scale(1.15);
+        }
+        .color-btn.selected {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3), var(--shadow-sm);
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Page -->
+    <div id="loginPage">
+        <div class="auth-container">
+            <div class="logo-title">
+                <img src="smartnotes.jpeg" alt="Smart Notes Logo">
+                <h1>Smart Notes</h1>
+            </div>
+            
+            <div id="loginForm" class="auth-form">
+                <h2>Masuk</h2>
+                <input type="email" id="loginEmail" placeholder="Email (@gmail.com)" class="auth-input">
+                <input type="password" id="loginPassword" placeholder="Password" class="auth-input">
+                <button onclick="login()" class="btn-auth">Masuk</button>
+                <button onclick="loginWithGoogle()" class="btn-auth" style="background: #fff; color: #444; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px;">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px;"> Masuk dengan Google
+                </button>
+                <p class="auth-switch">Belum punya akun? <a href="#" onclick="showRegister()">Daftar</a></p>
+            </div>
+            
+            <div id="registerForm" class="auth-form" style="display: none;">
+                <h2>Daftar</h2>
+                <input type="email" id="registerEmail" placeholder="Email (@gmail.com)" class="auth-input">
+                <input type="password" id="registerPassword" placeholder="Password (min 6 karakter)" class="auth-input">
+                <button onclick="register()" class="btn-auth">Daftar</button>
+                <button onclick="loginWithGoogle()" class="btn-auth" style="background: #fff; color: #444; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px;">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px;"> Daftar dengan Google
+                </button>
+                <p class="auth-switch">Sudah punya akun? <a href="#" onclick="showLogin()">Masuk</a></p>
+            </div>
+            
+            <div id="authMessage" class="auth-message"></div>
+        </div>
+    </div>
+
+    <!-- Main App (hidden until login) -->
+    <div id="mainApp">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <img src="smartnotes.jpeg" alt="Smart Notes Logo">
+                <span>Smart Notes</span>
+            </div>
+            <input type="text" class="search-bar" placeholder="Cari catatan...">
+            <div class="user-actions">
+                <span id="userEmail" class="user-email"></span>
+                <button id="themeToggle" class="btn-theme" onclick="toggleTheme()" title="Ganti tema">🌙</button>
+                <button class="btn-logout" onclick="logout()">Keluar</button>
+                <button class="new-note-btn">+ Catatan Baru</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-container">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <a href="#" class="nav-item active" data-category="Semua Catatan">📝 Semua Catatan</a>
+                <a href="#" class="nav-item" data-category="Favorit">⭐ Favorit</a>
+                <a href="#" class="nav-item" data-category="Tugas">✅ Tugas</a>
+                <a href="#" class="nav-item" data-category="Belajar">📚 Belajar</a>
+                <a href="#" class="nav-item" data-category="Ide">💡 Ide</a>
+                <a href="#" class="nav-item" data-category="Sampah">🗑️ Sampah</a>
+            </aside>
+
+            <!-- Content Area -->
+            <main class="content-area">
+                <h1 class="content-title">Semua Catatan</h1>
+                <div class="notes-grid" id="notesGrid">
+                    <div class="empty-state" id="emptyState">
+                        <p>Belum ada catatan. Klik "+ Catatan Baru" untuk menambahkan.</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Modal for Add/Edit Note -->
+        <div class="modal-overlay" id="noteModal">
+            <div class="modal">
+                <h2 id="modalTitle">Catatan Baru</h2>
+                <input type="text" id="noteTitleInput" placeholder="Judul catatan">
+                <div class="textarea-wrapper">
+                    <textarea id="noteContentInput" placeholder="Isi catatan..."></textarea>
+                    <button type="button" id="micBtn" class="mic-btn" onclick="toggleSpeechToText()" title="Speech to Text">🎙️</button>
+                </div>
+                <select id="noteCategory">
+                    <option value="Semua Catatan">Semua Catatan</option>
+                    <option value="Favorit">Favorit</option>
+                    <option value="Tugas">Tugas</option>
+                    <option value="Belajar">Belajar</option>
+                    <option value="Ide">Ide</option>
+                </select>
+                <div class="color-picker-container">
+                    <label>Pilih Warna Background:</label>
+                    <div class="color-options" id="colorOptions">
+                        <button class="color-btn" data-color="#E0E7FF" style="background: #E0E7FF;" onclick="selectColor('#E0E7FF')"></button>
+                        <button class="color-btn" data-color="#FEF3C7" style="background: #FEF3C7;" onclick="selectColor('#FEF3C7')"></button>
+                        <button class="color-btn" data-color="#FFFFFF" style="background: #FFFFFF; border: 1px solid #ddd;" onclick="selectColor('#FFFFFF')"></button>
+                        <button class="color-btn" data-color="#D1FAE5" style="background: #D1FAE5;" onclick="selectColor('#D1FAE5')"></button>
+                        <button class="color-btn" data-color="#FCE7F3" style="background: #FCE7F3;" onclick="selectColor('#FCE7F3')"></button>
+                        <button class="color-btn" data-color="#EDE9FE" style="background: #EDE9FE;" onclick="selectColor('#EDE9FE')"></button>
+                        <button class="color-btn" data-color="#FDE68A" style="background: #FDE68A;" onclick="selectColor('#FDE68A')"></button>
+                        <button class="color-btn" data-color="#A7F3D0" style="background: #A7F3D0;" onclick="selectColor('#A7F3D0')"></button>
+                        <button class="color-btn" data-color="#FECDD3" style="background: #FECDD3;" onclick="selectColor('#FECDD3')"></button>
+                        <button class="color-btn" data-color="#CFFAFE" style="background: #CFFAFE;" onclick="selectColor('#CFFAFE')"></button>
+                    </div>
+                </div>
+                <div class="modal-buttons">
+                    <button class="btn-cancel" onclick="closeModal()">Batal</button>
+                    <button class="btn-save" onclick="saveNote()">Simpan</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
